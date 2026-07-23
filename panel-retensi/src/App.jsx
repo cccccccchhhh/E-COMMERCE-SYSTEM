@@ -230,7 +230,7 @@ function fmt1(n){ return (Math.round(n*10)/10).toFixed(1); }
 // ═══════════════════════════════════════════════════════════════════════
 export default function App() {
   const [tab, setTab]           = useState("monitor");
-  const [orders, setOrders]     = useState(() => ORDERS_INIT.map(o => ({...o, spLevel:calcSpLevel(o.elapsed), remindSent:o.elapsed>=REMIND_H})));
+  const [orders, setOrders]     = useState(() => ORDERS_INIT.map(o => ({...o, spLevel:calcSpLevel(o.elapsed), remindSent:o.elapsed>=REMIND_H, blocked:o.elapsed>=BLOCK_H})));
   const [customers, setCustomers] = useState(CUSTOMERS_RAW);
   const [toasts, setToasts]     = useState([]);
   const [logEntries, setLogEntries] = useState([]);
@@ -250,6 +250,8 @@ export default function App() {
   const [resultBanner, setResultBanner] = useState(null);
   const [shake, setShake]           = useState(false);
   const [flagHistory, setFlagHistory] = useState([]);
+  const [campaignDisc, setCampaignDisc]   = useState(15);
+  const [campaignSent, setCampaignSent]   = useState(false);
 
   const logRef  = useRef(null);
   const logSeq  = useRef(0);
@@ -282,7 +284,7 @@ export default function App() {
       const newLogs = [], newToasts = [];
 
       setOrders(prev => prev.map(o => {
-        if (o.spLevel >= 3) return o;
+        if (o.spLevel >= 4) return o;
         const elapsed  = o.elapsed + SIM_H_PER_TICK;
         const newLevel = calcSpLevel(elapsed);
         let order      = {...o, elapsed};
@@ -304,9 +306,12 @@ export default function App() {
             } else if (lvl === 2) {
               newLogs.push({id, time:nowStr, col:SP_COLORS[2], text:`⚠️ SP2 eskalasi → ${o.seller} (${o.code}) melewati ${SP2_H} jam. Upload produk dibatasi.`});
               newToasts.push({id:"t"+id, title:"Eskalasi SP2", tc:SP_COLORS[2], body:`${o.code} · ${o.seller}`});
+            } else if (lvl === 3) {
+              newLogs.push({id, time:nowStr, col:SP_COLORS[3], text:`🚨 SP3 dikirim → ${o.seller} (${o.code}): melewati ${SP3_H} jam. Penjualan dibekukan sementara.`});
+              newToasts.push({id:"t"+id, title:"SP3 — Pinalti aktif", tc:SP_COLORS[3], body:`${o.code} · ${o.seller} — penjualan dibekukan`});
             } else {
-              newLogs.push({id, time:nowStr, col:SP_COLORS[3], text:`🚫 SP3: ${o.seller} diblokir otomatis — refund ${o.code} diproses ke pembeli (>${BLOCK_H} jam).`});
-              newToasts.push({id:"t"+id, title:"SP3 — Toko diblokir", tc:SP_COLORS[3], body:`${o.code} · refund diproses ke pelanggan.`});
+              newLogs.push({id, time:nowStr, col:SP_COLORS[4], text:`🚫 Blokir otomatis → ${o.seller} diblokir dari platform. Refund ${o.code} diproses ke pembeli (>${BLOCK_H} jam).`});
+              newToasts.push({id:"t"+id, title:"Toko diblokir", tc:SP_COLORS[4], body:`${o.code} · refund diproses ke pelanggan`});
             }
           }
           order.spLevel = newLevel;
@@ -615,70 +620,143 @@ export default function App() {
               </div>
             </div>
 
-            {/* TABEL PELANGGAN */}
-            <div style={{...card}}>
-              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16, flexWrap:"wrap", gap:10}}>
-                <div>
-                  <div style={{font:`500 10px ${mono}`, color:dim, textTransform:"uppercase", letterSpacing:".1em", marginBottom:4}}>Daftar pelanggan</div>
-                  <div style={{fontSize:13, color:"oklch(0.9 0.006 60)"}}>
-                    Menampilkan {filteredCustomers.length} dari {CUSTOMERS_RAW.length} pelanggan
-                    {filterSeg !== "Semua" && <span style={{marginLeft:8, padding:"2px 8px", background:`${SEG_DEFS.find(s=>s.name===filterSeg)?.color.replace(")","/0.2)")}`, borderRadius:6, fontSize:11, fontFamily:mono, color:SEG_DEFS.find(s=>s.name===filterSeg)?.color}}>{filterSeg}</span>}
+            {/* SEGMEN DETAIL + CAMPAIGN EDITOR */}
+            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:16}}>
+
+              {/* Pie chart + klik segmen */}
+              <div style={{...card}}>
+                <div style={{font:`500 10px ${mono}`, color:dim, textTransform:"uppercase", letterSpacing:".1em", marginBottom:14}}>Komposisi segmen — klik untuk detail</div>
+                <div style={{display:"flex", gap:16, alignItems:"center", marginBottom:18}}>
+                  {/* SVG Pie Chart */}
+                  <svg width="140" height="140" viewBox="0 0 140 140" style={{flexShrink:0}}>
+                    {(() => {
+                      const total = SEG_DEFS.reduce((s,d)=>s+d.pop,0);
+                      let startAngle = -Math.PI/2;
+                      return SEG_DEFS.map(seg => {
+                        const angle = (seg.pop/total)*2*Math.PI;
+                        const x1=70+60*Math.cos(startAngle), y1=70+60*Math.sin(startAngle);
+                        startAngle += angle;
+                        const x2=70+60*Math.cos(startAngle), y2=70+60*Math.sin(startAngle);
+                        const large = angle>Math.PI?1:0;
+                        const isActive = filterSeg===seg.name;
+                        return (
+                          <path key={seg.name}
+                            d={`M70,70 L${x1},${y1} A60,60 0 ${large},1 ${x2},${y2} Z`}
+                            fill={seg.color}
+                            opacity={isActive?1:filterSeg==="Semua"?0.85:0.35}
+                            stroke="oklch(0.16 0.006 55)" strokeWidth="2"
+                            style={{cursor:"pointer", transition:"opacity .2s"}}
+                            onClick={() => setFilterSeg(filterSeg===seg.name?"Semua":seg.name)}
+                          />
+                        );
+                      });
+                    })()}
+                    <circle cx="70" cy="70" r="28" fill="oklch(0.16 0.006 55)"/>
+                    <text x="70" y="66" textAnchor="middle" fill="oklch(0.9 0.006 60)" fontSize="11" fontFamily="Hanken Grotesk,sans-serif" fontWeight="600">
+                      {filterSeg==="Semua" ? "5.878" : filteredCustomers.length.toLocaleString()}
+                    </text>
+                    <text x="70" y="79" textAnchor="middle" fill="oklch(0.5 0.008 60)" fontSize="9" fontFamily="IBM Plex Mono,monospace">
+                      {filterSeg==="Semua" ? "pelanggan" : filterSeg.slice(0,9)}
+                    </text>
+                  </svg>
+                  <div style={{flex:1, display:"flex", flexDirection:"column", gap:6}}>
+                    {SEG_DEFS.map(s=>(
+                      <div key={s.name} onClick={()=>setFilterSeg(filterSeg===s.name?"Semua":s.name)}
+                        style={{display:"flex", alignItems:"center", gap:8, cursor:"pointer", padding:"4px 8px", borderRadius:7, background:filterSeg===s.name?s.color.replace(")","/0.15)"):"transparent", transition:"background .15s"}}>
+                        <span style={{width:8, height:8, borderRadius:"50%", background:s.color, flexShrink:0}}/>
+                        <span style={{fontSize:12, color:filterSeg===s.name?"oklch(0.92 0.006 60)":dim, flex:1}}>{s.name}</span>
+                        <span className="num" style={{fontSize:11, fontFamily:mono, color:s.color}}>{s.pop}%</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
-                <div style={{display:"flex", gap:6, flexWrap:"wrap", alignItems:"center"}}>
-                  {["Semua",...SEG_DEFS.map(s=>s.name)].map(f => {
-                    const seg = SEG_DEFS.find(s=>s.name===f);
-                    const active = filterSeg === f;
-                    return (
-                      <button key={f} onClick={() => setFilterSeg(f)} style={{background:active?(seg?seg.color.replace(")","/0.2)"):"oklch(0.8 0.11 68/0.15)"):"none", border:`1px solid ${active?(seg?seg.color.replace(")","/0.5)"):"oklch(0.8 0.11 68/0.5)"):"oklch(1 0 0/0.08)"}`, color:active?(seg?seg.color:gold):dim, font:`500 11.5px ${sans}`, padding:"6px 13px", borderRadius:8, cursor:"pointer"}}>
-                        {f}
-                      </button>
-                    );
-                  })}
-                  <div style={{marginLeft:"auto"}}>
-                    <button onClick={sendCampaign} style={{background:"oklch(0.64 0.14 26/0.2)", border:"1px solid oklch(0.64 0.14 26/0.5)", color:"oklch(0.64 0.14 26)", font:`600 11.5px ${sans}`, padding:"6px 16px", borderRadius:8, cursor:"pointer"}}>
-                      🚀 Luncurkan kampanye At-Risk
-                    </button>
-                  </div>
-                </div>
+
+                {/* Detail RFM segmen aktif */}
+                {filterSeg !== "Semua" && (() => {
+                  const seg = SEG_DEFS.find(s=>s.name===filterSeg);
+                  const rfmRef = {Champions:{R:31.5,F:15.8,M:8414}, "At-Risk":{R:277,F:4.5,M:1655}, "New/Promising":{R:39.9,F:2.4,M:665}, Hibernating:{R:431,F:1.2,M:294}};
+                  const rfm = rfmRef[filterSeg];
+                  return (
+                    <div style={{borderTop:"1px solid oklch(1 0 0/0.07)", paddingTop:12}}>
+                      <div style={{font:`500 10px ${mono}`, color:seg.color, textTransform:"uppercase", letterSpacing:".1em", marginBottom:10}}>Profil rata-rata · {filterSeg}</div>
+                      <div style={{display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8, marginBottom:10}}>
+                        {[["Recency","hari",rfm.R,rfm.R<60?"oklch(0.74 0.09 160)":rfm.R>300?"oklch(0.64 0.14 26)":dim,"Terakhir belanja"],
+                          ["Frequency","×",rfm.F,rfm.F>10?"oklch(0.74 0.09 160)":rfm.F<3?"oklch(0.64 0.14 26)":dim,"Rata-rata transaksi"],
+                          ["Monetary","rb",rfm.M,rfm.M>5000?gold:rfm.M<500?"oklch(0.64 0.14 26)":dim,"Rata-rata belanja"]
+                        ].map(([label,unit,val,col,desc])=>(
+                          <div key={label} style={{background:bg0, borderRadius:9, padding:"10px 12px", textAlign:"center"}}>
+                            <div style={{font:`700 18px/1 ${serif}`, color:col, marginBottom:3}}>{val}</div>
+                            <div style={{fontSize:10, fontFamily:mono, color:"oklch(0.5 0.008 60)"}}>{unit}</div>
+                            <div style={{fontSize:10, color:dim, marginTop:4}}>{desc}</div>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{fontSize:12, color:dim, lineHeight:1.6, padding:"8px 10px", background:bg0, borderRadius:8, borderLeft:`2px solid ${seg.color}`}}>
+                        {seg.treatment}
+                      </div>
+                      <div style={{marginTop:10, display:"flex", justifyContent:"space-between", fontSize:11, fontFamily:mono, color:dim}}>
+                        <span>{filteredCustomers.length.toLocaleString()} pelanggan</span>
+                        <span>Revenue: {seg.rev}% platform</span>
+                        <span>~Rp{(seg.rpc).toLocaleString("id-ID")}rb/org</span>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
-              <div style={{overflowX:"auto"}}>
-                <table style={{width:"100%", borderCollapse:"collapse", fontSize:12.5}}>
-                  <thead>
-                    <tr style={{borderBottom:"1px solid oklch(1 0 0/0.08)"}}>
-                      {["ID","Nama","Recency","Frequency","Monetary","Segmen","Aksi"].map(h => (
-                        <th key={h} style={{textAlign:["Recency","Frequency","Monetary"].includes(h)?"center":"left", padding:"8px 12px", font:`500 10px ${mono}`, color:dim, textTransform:"uppercase", letterSpacing:".06em"}}>{h}</th>
+              {/* Campaign editor */}
+              {(()=>{
+                const seg = SEG_DEFS.find(s=>s.name==="At-Risk");
+                const atRiskCount = customers.filter(c=>c.seg==="At-Risk").length;
+                const totalM = customers.filter(c=>c.seg==="At-Risk").reduce((s,c)=>s+c.M,0);
+                const estCost = Math.round(totalM * (campaignDisc/100) * 0.3);
+                const estRecovery = Math.round(totalM * 0.35);
+                const estROI = estCost > 0 ? (estRecovery/estCost).toFixed(1) : "—";
+                return (
+                  <div style={{...card, borderTop:`2px solid ${seg.color}`}}>
+                    <div style={{font:`500 10px ${mono}`, color:dim, textTransform:"uppercase", letterSpacing:".1em", marginBottom:14}}>Kampanye win-back · At-Risk</div>
+
+                    <div style={{display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:10, marginBottom:16}}>
+                      {[[atRiskCount.toLocaleString(),"pelanggan At-Risk","oklch(0.64 0.14 26)"],
+                        [`${seg.rev}%`,"kontribusi revenue",gold],
+                        [`Rp${(totalM/1000).toFixed(0)}jt`,"total historis belanja","oklch(0.72 0.08 178)"],
+                        [estROI+"×","estimasi ROI kampanye","oklch(0.74 0.09 160)"]
+                      ].map(([val,label,col])=>(
+                        <div key={label} style={{background:bg0, borderRadius:9, padding:"10px 12px"}}>
+                          <div className="num" style={{font:`600 18px/1 ${serif}`, color:col, marginBottom:3}}>{val}</div>
+                          <div style={{fontSize:11, color:dim}}>{label}</div>
+                        </div>
                       ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredCustomers.map((c, i) => {
-                      const seg = SEG_DEFS.find(s => s.name === c.seg);
-                      const sent = voucherSent.has(c.id);
-                      return (
-                        <tr key={c.id} style={{borderBottom:"1px solid oklch(1 0 0/0.04)", background:i%2===0?"transparent":bg2, animation:"slideIn .2s ease"}}>
-                          <td style={{padding:"9px 12px", fontFamily:mono, fontSize:11, color:dim}}>{c.id}</td>
-                          <td style={{padding:"9px 12px", color:"oklch(0.88 0.005 60)", fontWeight:500}}>{c.name}</td>
-                          <td style={{padding:"9px 12px", textAlign:"center", fontFamily:mono, color:c.R>200?"oklch(0.64 0.14 26)":c.R<50?"oklch(0.74 0.09 160)":"oklch(0.8 0.006 60)"}}>{c.R}</td>
-                          <td style={{padding:"9px 12px", textAlign:"center", fontFamily:mono, color:c.F>10?"oklch(0.74 0.09 160)":c.F<3?"oklch(0.64 0.14 26)":"oklch(0.8 0.006 60)"}}>{c.F}</td>
-                          <td className="num" style={{padding:"9px 12px", textAlign:"center", fontFamily:mono, color:c.M>5000?gold:c.M<500?"oklch(0.64 0.14 26)":"oklch(0.8 0.006 60)"}}>Rp{c.M.toLocaleString("id-ID")}</td>
-                          <td style={{padding:"9px 12px"}}>
-                            <span style={{fontSize:11, fontFamily:mono, padding:"3px 9px", borderRadius:5, background:seg?.color.replace(")","/0.18)"), color:seg?.color}}>{c.seg}</span>
-                          </td>
-                          <td style={{padding:"9px 12px"}}>
-                            {c.seg === "At-Risk" && (
-                              <button onClick={() => sendVoucher(c.id)} disabled={sent} style={{background:sent?"oklch(0.74 0.09 160/0.15)":"oklch(0.64 0.14 26/0.2)", border:`1px solid ${sent?"oklch(0.74 0.09 160/0.4)":"oklch(0.64 0.14 26/0.4)"}`, color:sent?"oklch(0.74 0.09 160)":"oklch(0.64 0.14 26)", font:`500 11px ${sans}`, padding:"5px 11px", borderRadius:7, cursor:sent?"default":"pointer", transition:"all .15s"}}>
-                                {sent ? "✓ Terkirim" : "Kirim diskon 15%"}
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                    </div>
+
+                    <div style={{marginBottom:14}}>
+                      <div style={{display:"flex", justifyContent:"space-between", marginBottom:6}}>
+                        <span style={{fontSize:12, color:dim}}>Besar diskon</span>
+                        <span className="num" style={{font:`700 16px ${mono}`, color:gold}}>{campaignDisc}%</span>
+                      </div>
+                      <input type="range" min="5" max="30" step="5" value={campaignDisc}
+                        onChange={e=>setCampaignDisc(Number(e.target.value))}
+                        style={{width:"100%", accentColor:gold}}
+                      />
+                      <div style={{display:"flex", justifyContent:"space-between", fontSize:10, fontFamily:mono, color:"oklch(0.4 0.008 60)", marginTop:3}}>
+                        <span>Min 5%</span><span>Maks 30%</span>
+                      </div>
+                    </div>
+
+                    <div style={{background:bg0, borderRadius:10, padding:"10px 14px", marginBottom:14, fontSize:12, lineHeight:1.7}}>
+                      <div style={{display:"flex", justifyContent:"space-between"}}><span style={{color:dim}}>Est. biaya voucher</span><span className="num" style={{fontFamily:mono, color:"oklch(0.64 0.14 26)"}}>Rp{estCost.toLocaleString("id-ID")}rb</span></div>
+                      <div style={{display:"flex", justifyContent:"space-between"}}><span style={{color:dim}}>Est. recovery revenue</span><span className="num" style={{fontFamily:mono, color:"oklch(0.74 0.09 160)"}}>Rp{estRecovery.toLocaleString("id-ID")}rb</span></div>
+                      <div style={{display:"flex", justifyContent:"space-between", borderTop:"1px solid oklch(1 0 0/0.07)", paddingTop:6, marginTop:6}}><span style={{color:dim}}>Estimasi ROI</span><span className="num" style={{fontFamily:mono, color:gold, fontWeight:600}}>{estROI}×</span></div>
+                    </div>
+
+                    <button onClick={()=>{sendCampaign();setCampaignSent(true);}} disabled={campaignSent||voucherSent.size>0}
+                      style={{width:"100%", background:campaignSent||voucherSent.size>0?"oklch(0.74 0.09 160/0.2)":"oklch(0.64 0.14 26/0.2)", border:`1px solid ${campaignSent||voucherSent.size>0?"oklch(0.74 0.09 160/0.5)":"oklch(0.64 0.14 26/0.5)"}`, color:campaignSent||voucherSent.size>0?"oklch(0.74 0.09 160)":"oklch(0.64 0.14 26)", font:`700 13px ${sans}`, padding:"12px", borderRadius:11, cursor:campaignSent||voucherSent.size>0?"default":"pointer", transition:"all .2s"}}>
+                      {campaignSent||voucherSent.size>0 ? `✓ Kampanye terkirim ke ${atRiskCount.toLocaleString()} pelanggan` : `🚀 Luncurkan kampanye diskon ${campaignDisc}% → ${atRiskCount.toLocaleString()} pelanggan`}
+                    </button>
+                    {campaignSent||voucherSent.size>0 && <div style={{marginTop:8, fontSize:11, color:"oklch(0.5 0.008 60)", textAlign:"center", fontFamily:mono}}>Voucher aktif 7 hari · cooldown 30 hari per pelanggan</div>}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* TREATMENT per segmen */}
@@ -703,10 +781,11 @@ export default function App() {
             <div style={{...card}}>
               <div style={{font:`500 10px ${mono}`, color:dim, textTransform:"uppercase", letterSpacing:".1em", marginBottom:14}}>Eskalasi otomatis — threshold tetap</div>
               <div style={{display:"flex", gap:12, flexWrap:"wrap", marginBottom:14}}>
-                {[[`> ${SP1_H} jam`,"SP1","Peringatan pertama terkirim ke seller",SP_COLORS[1]],
-                  [`> ${SP2_H} jam`,"SP2","Eskalasi, batasi upload produk",SP_COLORS[2]],
-                  [`> ${SP3_H} jam`,"SP3","Peringatan ketiga, pending pinalti",SP_COLORS[3]],
-                  [`> ${BLOCK_H} jam`,"Blokir","Toko diblokir, refund otomatis ke pembeli",SP_COLORS[3]]].map(([time,label,desc,col]) => (
+                {[[`> ${REMIND_H} jam`,"Reminder","Peringatan awal otomatis sebelum SP1","oklch(0.78 0.1 78)"],
+                  [`> ${SP1_H} jam`,"SP1","Surat peringatan pertama dikirim ke seller",SP_COLORS[1]],
+                  [`> ${SP2_H} jam`,"SP2","SP kedua, upload produk dibatasi",SP_COLORS[2]],
+                  [`> ${SP3_H} jam`,"SP3","SP ketiga, penjualan dibekukan",SP_COLORS[3]],
+                  [`> ${BLOCK_H} jam`,"Blokir","Toko diblokir, refund otomatis ke pembeli",SP_COLORS[4]]].map(([time,label,desc,col]) => (
                   <div key={label} style={{flex:1, minWidth:150, background:bg2, border:`1px solid ${col.replace(")","/0.3)")}`, borderRadius:10, padding:"12px 14px"}}>
                     <div className="num" style={{font:`700 13px ${mono}`, color:col, marginBottom:4}}>{time}</div>
                     <div style={{font:`600 12px ${sans}`, color:"oklch(0.85 0.005 60)", marginBottom:4}}>{label}</div>
@@ -719,7 +798,8 @@ export default function App() {
                 Saat ini: <span style={{color:"oklch(0.74 0.09 160)"}}>{orders.filter(o=>o.spLevel===0).length} aman</span> ·{" "}
                 <span style={{color:SP_COLORS[1]}}>{orders.filter(o=>o.spLevel===1).length} SP1</span> ·{" "}
                 <span style={{color:SP_COLORS[2]}}>{orders.filter(o=>o.spLevel===2).length} SP2</span> ·{" "}
-                <span style={{color:SP_COLORS[3]}}>{orders.filter(o=>o.spLevel>=3).length} diblokir</span>
+                <span style={{color:SP_COLORS[3]}}>{orders.filter(o=>o.spLevel===3).length} SP3</span> ·{" "}
+                <span style={{color:SP_COLORS[4]}}>{orders.filter(o=>o.spLevel>=4).length} diblokir</span>
               </div>
             </div>
 
@@ -730,11 +810,11 @@ export default function App() {
                   const thArr = [0, SP1_H, SP2_H, SP3_H, BLOCK_H];
                   const start  = thArr[Math.min(o.spLevel, 3)];
                   const target = thArr[Math.min(o.spLevel+1, 4)];
-                  const pct    = o.spLevel >= 3 ? 1 : Math.max(0, Math.min(1, (o.elapsed - start)/(target - start)));
+                  const pct    = o.spLevel >= 4 ? 1 : Math.max(0, Math.min(1, (o.elapsed - start)/(target - start)));
                   const col    = SP_COLORS[o.spLevel];
                   const nextTh = [SP1_H, SP2_H, SP3_H, BLOCK_H][Math.min(o.spLevel, 3)];
                   const rem    = Math.max(0, nextTh - o.elapsed);
-                  const remTxt = o.spLevel >= 3 ? "Toko ditutup — refund diproses." : `${fmt1(rem)} jam menuju ${["SP1","SP2","SP3","Blokir"][o.spLevel]}`;
+                  const remTxt = o.spLevel >= 4 ? "Toko ditutup — refund diproses." : `${fmt1(rem)} jam menuju ${["SP1","SP2","SP3","Blokir"][o.spLevel]}`;
                   const deg    = Math.round(pct*360);
                   return (
                     <div key={o.id} style={{background:o.spLevel>=3?"oklch(0.22 0.06 25)":bg2, border:o.spLevel>=3?"1px solid oklch(0.64 0.14 26/0.5)":"1px solid oklch(1 0 0/0.06)", borderRadius:14, padding:"14px 15px", animation:o.spLevel>=3?"pulseBlocked 2s ease infinite":"none"}}>
@@ -753,7 +833,7 @@ export default function App() {
                         </div>
                         <div style={{flex:1, fontSize:11.5, color:dim, lineHeight:1.45}}>{remTxt}</div>
                       </div>
-                      {o.spLevel >= 3 && (
+                      {o.spLevel >= 4 && (
                         <div style={{marginTop:10, background:"oklch(0.6 0.17 25)", color:"oklch(0.98 0.01 60)", font:`700 11px ${sans}`, padding:"6px 9px", borderRadius:8, textAlign:"center", animation:"blockBadgeIn .5s cubic-bezier(.34,1.56,.64,1)"}}>
                           Toko diblokir — refund diproses
                         </div>
