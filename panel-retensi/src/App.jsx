@@ -703,10 +703,11 @@ export default function App() {
             <div style={{...card}}>
               <div style={{font:`500 10px ${mono}`, color:dim, textTransform:"uppercase", letterSpacing:".1em", marginBottom:14}}>Eskalasi otomatis — threshold tetap</div>
               <div style={{display:"flex", gap:12, flexWrap:"wrap", marginBottom:14}}>
-                {[[`> ${SP1_H} jam`,"SP1","Peringatan pertama terkirim ke seller",SP_COLORS[1]],
-                  [`> ${SP2_H} jam`,"SP2","Eskalasi, batasi upload produk",SP_COLORS[2]],
-                  [`> ${SP3_H} jam`,"SP3","Peringatan ketiga, pending pinalti",SP_COLORS[3]],
-                  [`> ${BLOCK_H} jam`,"Blokir","Toko diblokir, refund otomatis ke pembeli",SP_COLORS[3]]].map(([time,label,desc,col]) => (
+                {[[`> ${REMIND_H} jam`,"Reminder","Peringatan awal otomatis sebelum SP1","oklch(0.78 0.1 78)"],
+                  [`> ${SP1_H} jam`,"SP1","Surat peringatan pertama dikirim ke seller",SP_COLORS[1]],
+                  [`> ${SP2_H} jam`,"SP2","SP kedua, upload produk dibatasi",SP_COLORS[2]],
+                  [`> ${SP3_H} jam`,"SP3","SP ketiga, penjualan dibekukan",SP_COLORS[3]],
+                  [`> ${BLOCK_H} jam`,"Blokir","Toko diblokir, refund otomatis ke pembeli",SP_COLORS[4]]].map(([time,label,desc,col]) => (
                   <div key={label} style={{flex:1, minWidth:150, background:bg2, border:`1px solid ${col.replace(")","/0.3)")}`, borderRadius:10, padding:"12px 14px"}}>
                     <div className="num" style={{font:`700 13px ${mono}`, color:col, marginBottom:4}}>{time}</div>
                     <div style={{font:`600 12px ${sans}`, color:"oklch(0.85 0.005 60)", marginBottom:4}}>{label}</div>
@@ -719,7 +720,8 @@ export default function App() {
                 Saat ini: <span style={{color:"oklch(0.74 0.09 160)"}}>{orders.filter(o=>o.spLevel===0).length} aman</span> ·{" "}
                 <span style={{color:SP_COLORS[1]}}>{orders.filter(o=>o.spLevel===1).length} SP1</span> ·{" "}
                 <span style={{color:SP_COLORS[2]}}>{orders.filter(o=>o.spLevel===2).length} SP2</span> ·{" "}
-                <span style={{color:SP_COLORS[3]}}>{orders.filter(o=>o.spLevel>=3).length} diblokir</span>
+                <span style={{color:SP_COLORS[3]}}>{orders.filter(o=>o.spLevel===3).length} SP3</span> ·{" "}
+                <span style={{color:SP_COLORS[4]}}>{orders.filter(o=>o.spLevel>=4).length} diblokir</span>
               </div>
             </div>
 
@@ -730,11 +732,11 @@ export default function App() {
                   const thArr = [0, SP1_H, SP2_H, SP3_H, BLOCK_H];
                   const start  = thArr[Math.min(o.spLevel, 3)];
                   const target = thArr[Math.min(o.spLevel+1, 4)];
-                  const pct    = o.spLevel >= 3 ? 1 : Math.max(0, Math.min(1, (o.elapsed - start)/(target - start)));
+                  const pct    = o.spLevel >= 4 ? 1 : Math.max(0, Math.min(1, (o.elapsed - start)/(target - start)));
                   const col    = SP_COLORS[o.spLevel];
                   const nextTh = [SP1_H, SP2_H, SP3_H, BLOCK_H][Math.min(o.spLevel, 3)];
                   const rem    = Math.max(0, nextTh - o.elapsed);
-                  const remTxt = o.spLevel >= 3 ? "Toko ditutup — refund diproses." : `${fmt1(rem)} jam menuju ${["SP1","SP2","SP3","Blokir"][o.spLevel]}`;
+                  const remTxt = o.spLevel >= 4 ? "Toko ditutup — refund diproses." : `${fmt1(rem)} jam menuju ${["SP1","SP2","SP3","Blokir"][o.spLevel]}`;
                   const deg    = Math.round(pct*360);
                   return (
                     <div key={o.id} style={{background:o.spLevel>=3?"oklch(0.22 0.06 25)":bg2, border:o.spLevel>=3?"1px solid oklch(0.64 0.14 26/0.5)":"1px solid oklch(1 0 0/0.06)", borderRadius:14, padding:"14px 15px", animation:o.spLevel>=3?"pulseBlocked 2s ease infinite":"none"}}>
@@ -753,7 +755,7 @@ export default function App() {
                         </div>
                         <div style={{flex:1, fontSize:11.5, color:dim, lineHeight:1.45}}>{remTxt}</div>
                       </div>
-                      {o.spLevel >= 3 && (
+                      {o.spLevel >= 4 && (
                         <div style={{marginTop:10, background:"oklch(0.6 0.17 25)", color:"oklch(0.98 0.01 60)", font:`700 11px ${sans}`, padding:"6px 9px", borderRadius:8, textAlign:"center", animation:"blockBadgeIn .5s cubic-bezier(.34,1.56,.64,1)"}}>
                           Toko diblokir — refund diproses
                         </div>
